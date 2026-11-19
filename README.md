@@ -4,7 +4,7 @@
 
 Capability brief: [`cl-stack/docs/capabilities/revision-backend-git.md`](https://github.com/egao1980/cl-stack/blob/main/docs/capabilities/revision-backend-git.md) · plan: [HARNESS-PLAN.md](https://github.com/egao1980/cl-workspace/blob/main/docs/HARNESS-PLAN.md) Track V.
 
-**Status: milestone V0 contract.** Exports, conditions, classes and documented behaviour are in place; the methods are stubs that signal a plain `simple-error`. `tests/` is the specification (Rove, run against throwaway repositories built with the real git). Implementation runs through **team-solve**.
+Version **0.1.0** — milestone V0: a [revision-protocol](https://github.com/egao1980/revision-protocol) store, working copy and read-only revision filesystem over the **git CLI** (minimum git 2.43.0; no libgit2). Projections, `commit-projection` and `execute-plan` are V1. Requires process-protocol 0.3.0 / process-backend-uiop 0.2.0 (octet capture, env merge, octet streams, timeouts).
 
 ## V0 surface
 

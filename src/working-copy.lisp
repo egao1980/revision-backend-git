@@ -51,36 +51,91 @@ state and drift rules."))
 or a full ref name starting with \"refs/\" that holds the stamp. A bare STORE
 → REVISION-ERROR; a STAMP-REF that is not a full, valid ref name
 (`check-ref-format`) → REVISION-ERROR."
-  (declare (ignore store stamp-ref))
-  (%not-implemented 'make-git-working-copy))
+  (check-type store git-store)
+  (check-type stamp-ref (or null string))
+  (when (git-store-bare-p store)
+    (error 'rev:revision-error :message "a bare repository has no working copy"))
+  (when stamp-ref
+    (unless (and (> (length stamp-ref) 5) (string= "refs/" stamp-ref :end2 5)
+                 (eql 0 (nth-value 1 (%git store (list "check-ref-format" stamp-ref)
+                                           :ok '(0 1 128)))))
+      (error 'rev:revision-error
+             :message (format nil "~s is not a full, valid ref name" stamp-ref))))
+  (make-instance 'git-working-copy :store store :stamp-ref (and stamp-ref (copy-seq stamp-ref))))
 
 (defun working-copy-path (working-copy)
   "→ absolute directory pathname of WORKING-COPY's worktree top-level (its
 store's GIT-STORE-PATH)."
-  (declare (ignore working-copy))
-  (%not-implemented 'working-copy-path))
+  (git-store-path (working-copy-store working-copy)))
+
+(defun %stamp-name (target)
+  (or (working-copy-stamp-ref target) "HEAD"))
 
 (defmethod rev:target-revisions ((target git-working-copy))
-  (%not-implemented 'rev:target-revisions))
+  (let ((id (%rev-parse-verify (working-copy-store target)
+                               (concatenate 'string (%stamp-name target) "^{commit}"))))
+    (and id (list id))))
+
+(defun %stamp-id (x)
+  (etypecase x
+    (rev:revision (rev:revision-id x))
+    (string (copy-seq x))))
 
 (defmethod rev:target-stamp ((target git-working-copy) revisions)
-  (declare (ignore revisions))
-  (%not-implemented 'rev:target-stamp))
+  (check-type revisions list)
+  (let ((store (working-copy-store target))
+        (ids (remove-duplicates (mapcar #'%stamp-id revisions) :test #'equal :from-end t)))
+    (cond
+      ((rest ids)
+       (error 'rev:revision-error
+              :message (format nil "a git working copy holds one stamp, not ~s" ids)))
+      ((null ids)
+       (unless (working-copy-stamp-ref target)
+         (error 'rev:revision-error :message "the HEAD stamp cannot be cleared"))
+       (%git store (list "update-ref" "-d" (working-copy-stamp-ref target)) :ok '(0 1))
+       nil)
+      (t
+       (let ((id (%resolve-id store (first ids))))
+         (%git store (list "update-ref" (%stamp-name target) id))
+         (list id))))))
+
+(defun %working-tree-id (target)
+  "Tree id of what `git add -A` would record, through a temporary index."
+  (let ((store (working-copy-store target)))
+    (%call-with-temp-index
+     store t
+     (lambda (env)
+       (%git store '("add" "-A") :extra-env env)
+       (%chomp (%git store '("write-tree") :extra-env env))))))
+
+(defmethod %operand-tree ((store git-store) (operand git-working-copy))
+  (%working-tree-id operand))
 
 (defmethod rev:target-state ((target git-working-copy))
-  (%not-implemented 'rev:target-state))
+  (%tree-state (working-copy-store target) (%working-tree-id target)))
 
 (defmethod rev:target-drift ((target git-working-copy) store)
-  (declare (ignore store))
-  (%not-implemented 'rev:target-drift))
+  (let* ((git (if (typep store 'git-store) store (working-copy-store target)))
+         (stamp (first (rev:target-revisions target)))
+         (stamp-tree (if stamp
+                         (rev:revision-content (%resolve git stamp))
+                         (%empty-tree git)))
+         (tree (%working-tree-id target)))
+    (unless (string= stamp-tree tree)
+      (%diff-trees git stamp-tree tree :changes nil))))
 
 (defmethod rev:capture-revision ((target git-working-copy) store
                                  &key (parents nil parents-p) message)
-  (declare (ignore store parents parents-p message))
-  (%not-implemented 'rev:capture-revision))
+  (let* ((git (if (typep store 'git-store) store (working-copy-store target)))
+         (tree (%working-tree-id target))
+         (revision (rev:commit-revision git tree
+                                        :parents (if parents-p parents (rev:target-revisions target))
+                                        :message (or message "capture"))))
+    (rev:target-stamp target (list revision))
+    revision))
 
 (defmethod rev:target-fidelities ((target git-working-copy))
-  (%not-implemented 'rev:target-fidelities))
+  '())
 
 (defmethod rev:target-transactional-p ((target git-working-copy))
-  (%not-implemented 'rev:target-transactional-p))
+  nil)
