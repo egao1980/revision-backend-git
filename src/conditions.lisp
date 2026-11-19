@@ -3,31 +3,18 @@
 ;;; Conditions. Everything a revision store reports through the protocol
 ;;; (REVISION-NOT-FOUND, AMBIGUOUS-REVISION, REF-CONFLICT, TAG-IMMUTABLE,
 ;;; REVISION-ERROR ...) is REVISION-PROTOCOL's own type: the backend signals
-;;; those. Only two conditions are git-specific:
+;;; those.
 ;;;
 ;;;   revision-error
-;;;   ├── vc-tool-version-error (tool found required)
+;;;   ├── vc-tool-version-error (tool found required)   revision-protocol's,
+;;;   │                                                  re-exported here
 ;;;   └── git-command-error     (command exit-code stderr)
 ;;;
-;;; VC-TOOL-VERSION-ERROR is shared with revision-backend-jj in spirit; it
-;;; moves to revision-protocol when that backend starts (see the brief), and
-;;; this package then re-exports the protocol's symbol.
-
-(define-condition vc-tool-version-error (rev:revision-error)
-  ((tool :initarg :tool :reader vc-tool-version-error-tool :initform nil)
-   (found :initarg :found :reader vc-tool-version-error-found :initform nil)
-   (required :initarg :required :reader vc-tool-version-error-required
-             :initform nil))
-  (:report (lambda (c s)
-             (format s "~a ~a is too old or missing: found ~a, need ~a or later"
-                     (or (vc-tool-version-error-tool c) "tool")
-                     (if (vc-tool-version-error-found c) "version" "program")
-                     (or (vc-tool-version-error-found c) "nothing")
-                     (vc-tool-version-error-required c))))
-  (:documentation "The version-control program TOOL (a string, \"git\") is
-older than REQUIRED (a version string), or cannot be run at all. FOUND is the
-version string the program reported, or NIL when it could not be started.
-Signalled by MAKE-GIT-STORE, before any other git command runs."))
+;;; VC-TOOL-VERSION-ERROR (TOOL "git", FOUND the version git reported or NIL
+;;; when it could not be started) is signalled by MAKE-GIT-STORE before any
+;;; other git command runs. It is the same condition revision-backend-jj
+;;; signals (revision-protocol#4); callers that write
+;;; STACK-REV-GIT:VC-TOOL-VERSION-ERROR keep working.
 
 (define-condition git-command-error (rev:revision-error)
   ((command :initarg :command :reader git-command-error-command :initform nil)

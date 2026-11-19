@@ -125,12 +125,17 @@ store's GIT-STORE-PATH)."
       (%diff-trees git stamp-tree tree :changes nil))))
 
 (defmethod rev:capture-revision ((target git-working-copy) store
-                                 &key (parents nil parents-p) message)
+                                 &key (parents nil parents-p) message provenance
+                                   valid-at id)
+  (when id
+    (error 'rev:revision-error :message "git chooses commit ids: :ID is not accepted"))
   (let* ((git (if (typep store 'git-store) store (working-copy-store target)))
          (tree (%working-tree-id target))
          (revision (rev:commit-revision git tree
                                         :parents (if parents-p parents (rev:target-revisions target))
-                                        :message (or message "capture"))))
+                                        :message (or message "capture")
+                                        :provenance provenance
+                                        :valid-at valid-at)))
     (rev:target-stamp target (list revision))
     revision))
 

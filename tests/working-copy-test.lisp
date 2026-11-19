@@ -169,3 +169,25 @@
         (ok (null (rev:revision-parent-ids rv)) "a root")
         (ok (equal (rev:revision-id rv) (rev r "main")) "the unborn branch is created")
         (ok (null (rev:target-drift wc s)))))))
+
+(deftest capture-caller-keys
+  ;; revision-protocol 0.3.0: :VALID-AT and :PROVENANCE as in COMMIT-REVISION;
+  ;; :ID refused before anything changes.
+  (with-test-repo (r)
+    (let ((c1 (getf (build-working-copy r) :c1)))
+      (dirty-working-copy r)
+      (with-store (s r)
+        (let ((wc (git:make-git-working-copy s)))
+          (ok (signals (rev:capture-revision wc s :id "chosen") 'rev:revision-error))
+          (ok (equal (list c1) (rev:target-revisions wc)) ":id refused: the stamp is kept")
+          (ok (equal c1 (rev r "main")) "and the branch")
+          (let ((rv (dt:with-fixed-clock ((instant (+ +t0+ 500)))
+                      (rev:capture-revision wc s :valid-at (instant (+ +t0+ 42))
+                                                 :provenance (list :author-name "Ada Lovelace"
+                                                                   :author-email "ada@example.invalid")))))
+            (ok (= (+ +t0+ 42) (unix (rev:revision-valid-at rv))) "author time = valid-at")
+            (ok (= (+ +t0+ 500) (unix (rev:revision-recorded-at rv))))
+            (ok (plist-matches-p '(:author-name "Ada Lovelace" :author-email "ada@example.invalid")
+                                 (rev:revision-provenance rv)))
+            (ok (equal (list (rev:revision-id rv)) (rev:target-revisions wc)))
+            (ok (null (rev:target-drift wc s)))))))))

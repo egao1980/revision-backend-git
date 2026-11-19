@@ -75,6 +75,21 @@
         (ok (null (git:vc-tool-version-error-found c)))
         (ok (equal git:*minimum-git-version* (git:vc-tool-version-error-required c)))))))
 
+(deftest vc-tool-version-error-is-the-protocol-condition
+  ;; revision-protocol#4: one condition for the git and jj backends, re-exported here.
+  (ok (eq 'git:vc-tool-version-error 'rev:vc-tool-version-error))
+  (ok (eq 'git:vc-tool-version-error-tool 'rev:vc-tool-version-error-tool))
+  (ok (eq 'git:vc-tool-version-error-found 'rev:vc-tool-version-error-found))
+  (ok (eq 'git:vc-tool-version-error-required 'rev:vc-tool-version-error-required))
+  (ok (eq :external (nth-value 1 (find-symbol "VC-TOOL-VERSION-ERROR" "REVISION-BACKEND-GIT")))))
+
+(deftest capability-queries
+  ;; revision-protocol#5
+  (with-test-repo (r)
+    (with-store (s r)
+      (ok (eq t (rev:ref-cas-p s)) ":ref-cas T: update-ref compares and swaps")
+      (ok (eq nil (rev:conflicted-revisions-p s)) ":conflicted-revisions NIL"))))
+
 (deftest store-paths
   (with-test-repo (r)
     (put-file r "marker.txt" "m")

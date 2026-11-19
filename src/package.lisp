@@ -6,8 +6,15 @@
                     (#:dt #:datetime-protocol)
                     (#:proc #:process-protocol)
                     (#:pathlib #:cl-stack-pathlib))
+  ;; revision-protocol's condition (shared with revision-backend-jj), re-exported.
+  (:import-from #:revision-protocol
+                #:vc-tool-version-error
+                #:vc-tool-version-error-tool
+                #:vc-tool-version-error-found
+                #:vc-tool-version-error-required)
   (:export
-   ;; conditions (git-specific; everything else is a revision-protocol condition)
+   ;; conditions: VC-TOOL-VERSION-ERROR is revision-protocol's (re-exported);
+   ;; GIT-COMMAND-ERROR is git-specific; everything else is a protocol condition.
    #:vc-tool-version-error
    #:vc-tool-version-error-tool
    #:vc-tool-version-error-found
