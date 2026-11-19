@@ -24,7 +24,7 @@
 
 (defsystem "revision-backend-git/tests"
   :depends-on ("revision-backend-git" "revision-protocol" "diff-protocol"
-               "datetime-protocol" "cl-stack-pathlib" "bordeaux-threads" "rove")
+               "datetime-protocol" "cl-stack-pathlib" "bordeaux-threads" "babel" "rove")
   :pathname "tests"
   :serial t
   :components ((:file "package")

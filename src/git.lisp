@@ -21,8 +21,9 @@ name looked up on PATH, or an absolute path (a string or pathname).")
 
 (defparameter *minimum-git-version* "2.43.0"
   "Oldest git release the backend accepts, as a version string. Locked for V0
-to the oldest git on the CI runners (the cl-repository ci-base container,
-Ubuntu 24.04: 2.43.0); see the brief for the per-runner table. MAKE-GIT-STORE
+to the oldest git on the CI runners, probed 2026-11-19: ci-base container
+(Ubuntu 24.04, where the ubuntu test job runs) 2.43.0; ubuntu-latest VM 2.56.1;
+macos-latest 2.56.0; windows-latest 2.56.0.windows.4. MAKE-GIT-STORE
 compares the probed version with the value of this variable at call time, so
 binding it higher makes any git look too old (tests do this).")
 
@@ -109,8 +110,9 @@ refs are linearizable with respect to each other and to other git processes
   (typep x 'git-store))
 
 (defun make-git-store (path &key (git *git-program*) env permit-force)
-  "→ GIT-STORE over the repository at PATH (a string or pathname naming the
-top-level directory of a non-bare worktree, or a bare repository / git dir).
+  "→ GIT-STORE over the repository at PATH (a string or pathname naming a
+directory inside a non-bare worktree — usually its top-level — or a bare
+repository / git dir).
 
 First probes `GIT --version` (once per program per image is enough; the
 check against *MINIMUM-GIT-VERSION* runs on every call). A version older than
@@ -119,8 +121,8 @@ version string, e.g. \"2.42.1\", :REQUIRED *MINIMUM-GIT-VERSION*); a program
 that cannot be started signals VC-TOOL-VERSION-ERROR with :FOUND NIL. No other
 git command runs before that check.
 
-PATH that is not a repository top-level (or does not exist) signals
-GIT-COMMAND-ERROR (from `rev-parse`). GIT-STORE-PATH is then the absolute
+PATH outside any repository (or missing) signals GIT-COMMAND-ERROR (from
+`rev-parse`). GIT-STORE-PATH is then the absolute
 directory pathname of the worktree top-level (NIL for a bare repository) and
 GIT-STORE-GIT-DIR the absolute directory pathname of the git dir.
 
