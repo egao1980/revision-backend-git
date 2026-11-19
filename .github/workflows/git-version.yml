@@ -1,0 +1,41 @@
+# Reads the git version on every CI environment the test matrix uses, so the
+# backend's *minimum-git-version* can be locked to what all of them have.
+# Ubuntu tests run in the cl-repository ci-base container, so it is probed
+# both on the VM and in that container.
+name: git-version
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  vm:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: git --version
+        run: |
+          echo "### ${{ matrix.os }} (VM)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          { git --version; type -a git; } | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+  ci-base:
+    runs-on: ubuntu-latest
+    container: ghcr.io/egao1980/cl-repository/ci-base:latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: git --version
+        run: |
+          echo "### ubuntu ci-base container" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          { git --version; type -a git; } | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
