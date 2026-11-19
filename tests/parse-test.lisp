@@ -29,9 +29,9 @@
                           "! ignored.log"
                           (format nil "1 .M SC.. 160000 160000 160000 ~a ~a vendor/lib" +h1+ +h1+)))
          (entries (git:parse-status-porcelain-v2 input)))
-    (ok (= 10 (length entries)) "headers skipped, one plist per entry")
-    (when (= 10 (length entries))
-      (destructuring-bind (e1 e2 e3 e4 e5 e6 e7 e8 e9 e10) entries
+    (ok (= 9 (length entries)) "headers skipped, one plist per entry")
+    (when (= 9 (length entries))
+      (destructuring-bind (e1 e2 e3 e4 e5 e6 e7 e8 e9) entries
         (ok (plist-matches-p (list :kind :changed :xy ".M" :submodule "N..."
                                    :mode-head #o100644 :mode-index #o100644 :mode-worktree #o100644
                                    :id-head +h1+ :id-index +h1+ :path "tracked file.txt")
@@ -55,8 +55,7 @@
         (ok (plist-matches-p '(:kind :ignored :path "ignored.log") e8))
         (ok (plist-matches-p (list :kind :changed :submodule "SC.." :mode-head #o160000
                                    :path "vendor/lib")
-                             e9))
-        (ok (null e10))))))
+                             e9))))))
 
 (deftest status-v2-empty-and-malformed
   (ok (null (git:parse-status-porcelain-v2 "")))

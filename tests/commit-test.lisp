@@ -29,7 +29,7 @@
                                            :output :octets))
             "CRLF kept")
         (ok (state= (sample-tree) (rev:revision-state s id)) "state round-trips")
-        (ok (equal (lines "root") (git* r (list "log" "-1" "--format=%B" id))) "message + newline")
+        (ok (equal (lines "root") (git* r (list "log" "-1" "--pretty=format:%B" id))) "message + newline")
         (ok (equal "root" (rev:revision-message rv)))
         (ok (equal (format nil "~d ~d" (+ +t0+ 7) (+ +t0+ 7))
                    (git r "log" "-1" "--format=%ct %at" id))
@@ -54,10 +54,10 @@
                        (format nil "~a ~a" (rev:revision-id b) (rev:revision-id side))))))
         (let ((root (rev:commit-revision s tree2 :parents nil :ref "main" :message "new root")))
           (ok (null (rev:revision-parent-ids root)) ":parents nil = a root")
-          (ok (equal (rev:revision-id root) (rev r "main"))))
-        (let ((loose (rev:commit-revision s tree2 :parents (list a) :message "no ref")))
-          (ok (equal "commit" (git r "cat-file" "-t" (rev:revision-id loose))) "commit without a ref")
-          (ok (equal (rev:revision-id root) (rev r "main")) "no ref moved"))))))
+          (ok (equal (rev:revision-id root) (rev r "main")))
+          (let ((loose (rev:commit-revision s tree2 :parents (list a) :message "no ref")))
+            (ok (equal "commit" (git r "cat-file" "-t" (rev:revision-id loose))) "commit without a ref")
+            (ok (equal (rev:revision-id root) (rev r "main")) "no ref moved")))))))
 
 (deftest commit-tree-ids-and-index
   (with-test-repo (r)
@@ -74,8 +74,10 @@
         (put-file r "a.txt" (lines "unstaged edit"))
         (let ((before (index-digest r))
               (rv (rev:commit-revision s :index :parents (list (rev:rev-ref "main")) :message "index")))
-          (ok (equal (git r "write-tree") (rev:revision-content rv)) "the index tree")
+          ;; Check the index first: the test's own `git write-tree` below
+          ;; rewrites the index's cache-tree.
           (ok (equalp before (index-digest r)) "index file untouched")
+          (ok (equal (git r "write-tree") (rev:revision-content rv)) "the index tree")
           (ok (equal (lines "one" "two")
                      (git* r (list "cat-file" "blob" (format nil "~a:a.txt" (rev:revision-id rv)))))
               "unstaged edits are not in it"))))))
