@@ -200,7 +200,11 @@
     ("dir\\x/in\"ner.txt" ,(lines "deep"))))
 
 (defun build-quoted (repo)
-  "→ (:k1 id :k2 id): +QUOTED-K1+ then +QUOTED-K2+, index-only commits."
+  "→ (:k1 id :k2 id): +QUOTED-K1+ then +QUOTED-K2+, index-only commits.
+Git for Windows refuses NTFS-invalid names (tab, quote, backslash) in the
+index unless core.protectNTFS is off; the commits are index-only, so no such
+file is ever written to disk."
+  (git* repo '("config" "core.protectNTFS" "false"))
   (flet ((commit-files (files message at)
            (git* repo '("read-tree" "--empty"))
            (loop for (path content) in files
