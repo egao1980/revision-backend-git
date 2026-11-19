@@ -179,3 +179,69 @@
                                                  (position-if-not #'stringp (diff:change-path c))))
                              (diff:diff-changes d))
                      :test #'equal))))))))
+
+;;; Paths git C-quotes even with core.quotepath=off (a TAB, a newline, '"',
+;;; '\'): every level, through diff-protocol's unquoting (diff-protocol#4).
+;;; Index-only commits, so the names need no filesystem support.
+
+(defun %tabbed (a b) (format nil "~a~c~a" a #\Tab b))
+
+(defparameter +quoted-k1+
+  `((,(%tabbed "tab" "here.txt") ,(lines "one" "two"))
+    ("quote\"d.txt" ,(lines "1" "2" "3" "4" "5"))
+    ("back\\slash.txt" ,(lines "gone"))
+    ("plain.txt" ,(lines "a" "b" "c" "d" "e"))))
+
+(defparameter +quoted-k2+
+  `((,(%tabbed "tab" "here.txt") ,(lines "one" "TWO"))
+    (,(%tabbed "renamed" "too.txt") ,(lines "1" "2" "3" "4" "FIVE"))
+    ("new\"name.txt" ,(lines "a" "b" "c" "d" "e"))
+    (,(format nil "nl~%name.txt") ,(lines "new"))
+    ("dir\\x/in\"ner.txt" ,(lines "deep"))))
+
+(defun build-quoted (repo)
+  "→ (:k1 id :k2 id): +QUOTED-K1+ then +QUOTED-K2+, index-only commits."
+  (flet ((commit-files (files message at)
+           (git* repo '("read-tree" "--empty"))
+           (loop for (path content) in files
+                 do (index-entry repo "100644" (hash-blob repo content) path))
+           (commit-index repo message :at at)))
+    (list :k1 (commit-files +quoted-k1+ "quoted k1" 1700000000)
+          :k2 (commit-files +quoted-k2+ "quoted k2" 1700000100))))
+
+(deftest-parametrize state-diff-quoted-paths
+    ((level) :ids ("summary" "changes" "content") (:summary) (:changes) (:content))
+  (with-test-repo (r)
+    (let ((k (build-quoted r)))
+      (with-store (s r)
+        (let* ((a (getf k :k1)) (b (getf k :k2))
+               (sa (rev:revision-state s a)) (sb (rev:revision-state s b))
+               (d (rev:state-diff s a b :level level))
+               (changes (diff:diff-changes d)))
+          (ok (state= sb (diff:apply-diff sa d)) "apply(state a, diff(a, b)) = state b")
+          (ok (state= sa (diff:apply-diff sb (diff:invert-diff d))) "the inverse goes back")
+          (ok (set= (list (list (%tabbed "tab" "here.txt")) (list (%tabbed "renamed" "too.txt"))
+                          '("new\"name.txt") '("back\\slash.txt") (list (format nil "nl~%name.txt"))
+                          '("dir\\x" "in\"ner.txt"))
+                    (remove-duplicates
+                     (loop for c in changes
+                           collect (loop for step in (diff:change-path c) while (stringp step) collect step))
+                     :test #'equal))
+              "the files git reports, with their names unquoted")
+          (let ((tab (list (%tabbed "tab" "here.txt"))))
+            (ecase level
+              (:summary (ok (find tab changes :key #'diff:change-path :test #'equal)))
+              (:changes
+               (ok (some (lambda (c) (let ((p (diff:change-path c)))
+                                       (and (> (length p) 1) (equal tab (subseq p 0 1)))))
+                         changes)
+                   "a quoted path's edit is a hunk nested under the file, not a whole-file change"))
+              (:content
+               (let ((m (find tab changes :key #'diff:change-path :test #'equal)))
+                 (ok (and m (diff:change-children m)) "file-level change with hunk children")))))
+          (unless (eq level :summary)
+            (let ((mv (find (list (%tabbed "renamed" "too.txt")) changes
+                            :key #'diff:change-path :test #'equal)))
+              (ok (and mv (eq :move (diff:change-kind mv))
+                       (equal '("quote\"d.txt") (diff:change-from mv)))
+                  "rename between two quoted paths"))))))))

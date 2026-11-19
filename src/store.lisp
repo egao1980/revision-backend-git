@@ -86,7 +86,8 @@
 ;;;   Rename detection is git's -M (50%). At every level:
 ;;;     (state-equal engine (apply-diff (state a) (state-diff s a b)) (state b)).
 ;;;   Paths git must C-quote even with core.quotepath=off (control
-;;;   characters, '"', '\') are supported at :SUMMARY only in V0.
+;;;   characters, '"', '\') are unquoted by DIFF-PROTOCOL's PARSE-DIFF
+;;;   :UNIFIED (0.2.1), so they get hunks at :CHANGES and :CONTENT too.
 ;;; ------------------------------------------------------------------
 
 ;;; ------------------------------------------------------------------
@@ -787,6 +788,14 @@ its lock are deleted afterwards; the real index is never opened for writing."
 
 (defmethod rev:content-engine ((store git-store))
   (diff:find-diff-engine :tree))
+
+(defmethod rev:ref-cas-p ((store git-store))
+  "T: refs move by `git update-ref` with an expected old value (git's lock)."
+  t)
+
+(defmethod rev:conflicted-revisions-p ((store git-store))
+  "NIL: a git commit records resolved trees only."
+  nil)
 
 (defun %classify (octets)
   "→ the text of OCTETS, or NIL when they are binary (a NUL in the first 8000

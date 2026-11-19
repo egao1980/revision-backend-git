@@ -1,10 +1,10 @@
 (defsystem "revision-backend-git"
-  :version "0.1.0"
+  :version "0.2.0"
   :description "revision-protocol backend over the git CLI: commits as revisions, branches and tags as refs with update-ref CAS, graph walks via rev-list, state diffs via diff-tree / git diff and diff-protocol, working-copy drift and capture, a read-only cl-stack-pathlib filesystem per revision"
   :author "egao1980"
   :license "MIT"
-  :depends-on ((:version "revision-protocol" "0.2.0")
-               (:version "diff-protocol" "0.2.0")
+  :depends-on ((:version "revision-protocol" "0.3.0")
+               (:version "diff-protocol" "0.2.1")
                (:version "datetime-protocol" "0.1.3")
                (:version "process-protocol" "0.3.0")
                (:version "process-backend-uiop" "0.2.0")
