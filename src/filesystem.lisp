@@ -22,7 +22,9 @@
 ;;;                                              universal time, every entry
 ;;;   fs-iterdir                                 children in git tree order
 ;;;   fs-read-bytes                              exact blob bytes
-;;;   fs-walk / fs-glob                          as zip-filesystem (IGNORE too)
+;;;   fs-walk                                    as zip-filesystem (IGNORE too)
+;;;   fs-glob                                    pathlib's generic method over
+;;;                                              fs-iterdir (fnmatch, IGNORE)
 ;;;   fs-stat                                    kind :FILE / :DIRECTORY
 ;;;                                              (:SYMLINK without following),
 ;;;                                              mode #o644 / #o755, mtime as
@@ -254,7 +256,8 @@ REVISION-FILESYSTEM of DESIGNATOR in STORE."
                    :mode (if (eql (getf e :mode) #o100755) #o755 #o644)
                    :filesystem fs)))
 
-;;; Glob / walk (as zip-filesystem)
+;;; Walk (as zip-filesystem). FS-GLOB is pathlib's generic method (over
+;;; FS-ITERDIR).
 
 (defun %fs-ignore (fs base ignore)
   "Matcher for IGNORE (NIL, an IGNORE-MATCHER or :AUTO) at BASE."
@@ -266,43 +269,6 @@ REVISION-FILESYSTEM of DESIGNATOR in STORE."
 
 (defun %relative-key (prefix key)
   (subseq key (length prefix)))
-
-(defun %wild-pattern (pattern)
-  (cond ((string= pattern "*") (make-pathname :name :wild :type :wild))
-        ((and (>= (length pattern) 2) (char= (char pattern 0) #\*) (char= (char pattern 1) #\.))
-         (make-pathname :name :wild :type (subseq pattern 2)))
-        ((find #\* pattern) (uiop:parse-unix-namestring pattern :wilden t))
-        (t (uiop:parse-unix-namestring pattern))))
-
-(defun %name-matches-p (name pattern)
-  (or (string= name pattern)
-      (pathname-match-p (uiop:parse-unix-namestring name) (%wild-pattern pattern))))
-
-(defmethod pathlib:fs-glob ((fs revision-filesystem) pathname pattern &key recursive ignore)
-  (multiple-value-bind (e base-key) (%fs-entry fs pathname)
-    (declare (ignore e))
-    (let ((prefix (if (string= base-key "/") "/" (concatenate 'string base-key "/")))
-          (matcher (%fs-ignore fs pathname ignore))
-          (out '()))
-      (labels ((visit (key)
-                 (dolist (name (gethash key (%fs-children fs)))
-                   (let* ((child (if (string= key "/")
-                                     (concatenate 'string "/" name)
-                                     (concatenate 'string key "/" name)))
-                          (rel (%relative-key prefix child))
-                          (dir-p (%entry-dir-p (gethash child (%fs-entries fs)))))
-                     (unless (and matcher (pathlib:ignore-path-p matcher rel :directory dir-p))
-                       (when (and (or recursive (find #\/ pattern) (not (find #\/ rel)))
-                                  (if (find #\/ pattern)
-                                      (pathname-match-p (uiop:parse-unix-namestring rel)
-                                                        (%wild-pattern pattern))
-                                      (%name-matches-p name pattern)))
-                         (push (pathlib:fs-parse fs child) out))
-                       (when (and dir-p (or recursive (find #\/ pattern)))
-                         (visit child)))))))
-        (when (gethash base-key (%fs-children fs))
-          (visit base-key)))
-      (nreverse out))))
 
 (defmethod pathlib:fs-walk ((fs revision-filesystem) pathname &key (top-down t) follow-symlinks ignore)
   (declare (ignore follow-symlinks))

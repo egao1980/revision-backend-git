@@ -128,3 +128,32 @@
                      (make-list 100))
               "200 object reads")
           (ok (git:git-store-batch-active-p s)))))))
+
+(deftest glob-through-pathlib
+  ;; FS-GLOB is cl-stack-pathlib's generic method over FS-ITERDIR.
+  (with-test-repo (r)
+    (let* ((k (build-content r))
+           (all (git-lines r "ls-tree" "-r" "--name-only" (getf k :k2))))
+      (flet ((posix (ps) (mapcar #'pathlib:as-posix ps))
+             (abs* (ps) (mapcar (lambda (p) (concatenate 'string "/" p)) ps))
+             (txt-p (p) (uiop:string-suffix-p p ".txt")))
+        (with-store (s r)
+          (with-revision-fs (fs s (getf k :k2))
+            (ok (set= (abs* (remove-if-not (lambda (p) (and (txt-p p) (not (find #\/ p)))) all))
+                      (posix (pathlib:glob "/" "*.txt")))
+                "glob: top level only")
+            (ok (set= (abs* (remove-if-not #'txt-p all))
+                      (posix (pathlib:rglob "/" "*.txt")))
+                "rglob: every depth")
+            (ok (equal '("/src/main.lisp") (posix (pathlib:glob "/" "src/*.lisp")))
+                "pattern with a slash")
+            (ok (equal '("/src/main.lisp") (posix (pathlib:glob "/src" "*")))
+                "glob under a subdirectory")
+            (ok (equal '("/src/main.lisp") (posix (pathlib:glob "/" "**/m?in.[l]isp")))
+                "** and fnmatch classes")
+            (ok (null (pathlib:glob "/" "*.nothing")))
+            (ok (not (member "/new/name.txt"
+                             (posix (pathlib:rglob "/" "*.txt"
+                                                   :ignore (pathlib:parse-ignore '("new/"))))
+                             :test #'string=))
+                "IGNORE drops ignored directories")))))))
