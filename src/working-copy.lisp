@@ -142,7 +142,53 @@ store's GIT-STORE-PATH)."
     revision))
 
 (defmethod rev:target-fidelities ((target git-working-copy))
-  '())
+  "(:EXACT :SHADOW): :EXACT is a virtual projection of the goal tree, :SHADOW
+a linked worktree where the plan really runs (src/plan.lisp)."
+  (list :exact :shadow))
+
+;;; ------------------------------------------------------------------
+;;; Writing a tree into a worktree (V1). Shared by (SETF TARGET-STATE),
+;;; (SETF PROJECTION-STATE), DISCARD-DRIFT and the stamp-ref steps of
+;;; EXECUTE-PLAN. Only a temporary index is used: the real index, HEAD and
+;;; every ref stay as they are.
+;;; ------------------------------------------------------------------
+
+(defun %delete-worktree-path (top rel)
+  "Delete the file REL (git's /-separated path relative to the directory TOP),
+then each parent directory below TOP that this leaves empty."
+  (let* ((top-native (uiop:native-namestring top))
+         (comps (%split-string rel #\/)))
+    (handler-case (delete-file (uiop:parse-native-namestring
+                                (concatenate 'string top-native rel)))
+      (file-error () nil))
+    (loop for k from (1- (length comps)) downto 1
+          for dir = (uiop:ensure-directory-pathname
+                     (uiop:parse-native-namestring
+                      (format nil "~a~{~a~^/~}" top-native (subseq comps 0 k))))
+          while (and (uiop:directory-exists-p dir)
+                     (null (uiop:directory-files dir))
+                     (null (uiop:subdirectories dir)))
+          do (uiop:delete-empty-directory dir))))
+
+(defun %write-worktree (store tree)
+  "Make the files of STORE's worktree equal the tree object TREE (an id):
+files of TREE are written (`checkout-index -f -a` from a temporary index
+holding TREE), tracked and untracked files outside TREE are deleted, ignored
+files (by the rules in effect after the write) are left alone; embedded
+repositories are never entered. → TREE."
+  (let ((top (git-store-path store)))
+    (%call-with-temp-index
+     store nil
+     (lambda (env)
+       (%git store (list "read-tree" tree) :extra-env env)
+       (%git store '("checkout-index" "-f" "-a") :extra-env env)
+       ;; The index holds exactly TREE: "others, not ignored" are precisely the
+       ;; paths to delete.
+       (dolist (rel (%nul-records (%git store '("ls-files" "-z" "--others" "--exclude-standard")
+                                        :extra-env env)))
+         (unless (char= #\/ (char rel (1- (length rel))))
+           (%delete-worktree-path top rel)))))
+    tree))
 
 (defmethod rev:target-transactional-p ((target git-working-copy))
   nil)

@@ -43,6 +43,8 @@
 (defclass revision-filesystem (pathlib:filesystem)
   ((store :initarg :store :reader revision-filesystem-store)
    (revision :initarg :revision :reader revision-filesystem-revision)
+   (tree :initarg :tree :initform nil :reader %fs-tree
+         :documentation "The tree id read when REVISION is NIL (MAKE-TREE-FILESYSTEM).")
    (mtime :initarg :mtime :reader %fs-mtime
           :documentation "The commit's committer date, universal time.")
    (entries :initform nil :accessor %fs-entries)
@@ -53,7 +55,8 @@
           :documentation "Private POSIX filesystem whose pure path GFs this one uses."))
   (:default-initargs :name "git-revision")
   (:documentation "Read-only CL-STACK-PATHLIB filesystem over one commit's tree.
-REVISION-FILESYSTEM-REVISION is the commit id (a string)."))
+REVISION-FILESYSTEM-REVISION is the commit id (a string), or NIL for a
+filesystem over a bare tree object (MAKE-TREE-FILESYSTEM)."))
 
 (defun revision-filesystem-p (x)
   "T when X is a REVISION-FILESYSTEM."
@@ -91,7 +94,8 @@ REVISION-FILESYSTEM of DESIGNATOR in STORE."
               (gethash "/" children) '())
         (dolist (e (parse-ls-tree
                     (%git (revision-filesystem-store fs)
-                          (list "ls-tree" "-r" "-t" "-z" "-l" (revision-filesystem-revision fs)))))
+                          (list "ls-tree" "-r" "-t" "-z" "-l"
+                                (or (%fs-tree fs) (revision-filesystem-revision fs))))))
           (let* ((key (concatenate 'string "/" (getf e :path)))
                  (slash (position #\/ key :from-end t))
                  (parent (if (zerop slash) "/" (subseq key 0 slash))))
