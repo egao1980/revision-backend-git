@@ -189,6 +189,9 @@ REVISION-PROVENANCE the plist (:AUTHOR-NAME s :AUTHOR-EMAIL s :COMMITTER-NAME s
 
 Refs: movable refs are branches (refs/heads/NAME), tags are refs/tags/NAME;
 protocol ref names are the short names (\"main\", \"feature/x\", \"v1.0\").
+A name starting with refs/ is a full ref name and is used as given
+(\"refs/cl-stack-code/plans/p1\" is a movable ref, \"refs/tags/v1\" a tag);
+LIST-REFS with such a :PREFIX lists every ref under it by full name.
 CONTENT-PRIMARY is :STATE; states are DIFF-PROTOCOL tree values; the empty
 state is (DIFF-PROTOCOL:MAKE-TREE).
 
