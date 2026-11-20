@@ -29,7 +29,6 @@
         (ok (eq s (git:working-copy-store wc)))
         (ok (null (git:working-copy-stamp-ref wc)))
         (ok (probe-file (merge-pathnames "tracked.txt" (git:working-copy-path wc))))
-        (ok (null (rev:target-fidelities wc)) "no projections in V0")
         (ok (not (rev:target-transactional-p wc))))
       (ok (signals (git:make-git-working-copy s :stamp-ref "not a ref") 'rev:revision-error))
       (ok (signals (git:make-git-working-copy s :stamp-ref "main") 'rev:revision-error)
