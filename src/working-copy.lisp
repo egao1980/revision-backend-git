@@ -102,11 +102,21 @@ store's GIT-STORE-PATH)."
          (list id))))))
 
 (defun %working-tree-id (target)
-  "Tree id of what `git add -A` would record, through a temporary index."
+  "Tree id of what `git add -A` would record, through a temporary index.
+The temporary index holds the real index's entries (so tracked files that
+match an ignore rule stay) but no stat data: `update-index --index-info`
+records none, so `add -A` hashes every file. A copy of the real index would
+carry its stat cache, and that cache lies after %WRITE-WORKTREE rewrote files
+behind it: git compares whole-second mtimes, so a same-size rewrite in the
+same second (with the inode reused, as ext4 does, or with no inode at all, as
+on Windows) looks clean and `add -A` keeps the old blob."
   (let ((store (working-copy-store target)))
     (%call-with-temp-index
-     store t
+     store nil
      (lambda (env)
+       (%git store '("update-index" "-z" "--index-info")
+             :extra-env env
+             :input (%git store '("ls-files" "-s" "-z") :output :octets))
        (%git store '("add" "-A") :extra-env env)
        (%chomp (%git store '("write-tree") :extra-env env))))))
 
