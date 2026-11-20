@@ -86,9 +86,7 @@
    #:remove-worktree
    #:parse-worktree-list
 
-   ;; replay (capability-gated: git >= *replay-git-version*)
-   #:*replay-git-version*
-   #:git-replay-p
+   ;; replay
    #:replay-revisions
    #:replay-conflict
    #:replay-conflict-revision

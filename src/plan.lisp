@@ -120,7 +120,11 @@ REVISION-ERROR for a stamp that is neither."
 (defun %sync-real-index (ws tree)
   "HEAD stamp only: the real index of WS holds TREE, with fresh stat data
 (`read-tree --reset` when it differs, then `update-index --refresh`), so that
-`read-tree -m -u` sees the worktree as up to date."
+`read-tree -m -u` sees the worktree as up to date. Only git writes the real
+index, in place (never a copy over it), so git's racy-git rule covers its
+stat cache: an entry not older than the index file is compared by content.
+%WRITE-WORKTREE rewrites only the paths that differ, so the refresh hashes
+those and trusts the rest."
   (unless (equal tree (%index-tree ws))
     (%git ws (list "read-tree" "--reset" tree)))
   (%git ws '("update-index" "-q" "--refresh") :ok '(0 1)))
