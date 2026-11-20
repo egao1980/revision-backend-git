@@ -17,11 +17,11 @@
   "The git executable MAKE-GIT-STORE uses when :GIT is not given: a program
 name looked up on PATH, or an absolute path (a string or pathname).")
 
-(defparameter *minimum-git-version* "2.43.0"
-  "Oldest git release the backend accepts, as a version string. Locked for V0
-to the oldest git on the CI runners, probed 2026-11-19: ci-base container
-(Ubuntu 24.04, where the ubuntu test job runs) 2.43.0; ubuntu-latest VM 2.56.1;
-macos-latest 2.56.0; windows-latest 2.56.0.windows.4. MAKE-GIT-STORE
+(defparameter *minimum-git-version* "2.56.0"
+  "Oldest git release the backend accepts, as a version string. Locked to the
+oldest git on the CI runners, probed 2026-11-20 (git-version workflow):
+ci-base container (where the ubuntu test job runs) 2.56.1; ubuntu-latest VM
+2.56.1; macos-latest 2.56.0; windows-latest 2.56.1.windows.1. MAKE-GIT-STORE
 compares the probed version with the value of this variable at call time, so
 binding it higher makes any git look too old (tests do this).")
 

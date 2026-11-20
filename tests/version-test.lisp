@@ -31,8 +31,8 @@
   (ok (equal expected (git:parse-git-version input))))
 
 (deftest minimum-git-version-is-locked
-  (ok (equal "2.43.0" git:*minimum-git-version*)
-      "V0 minimum = the oldest git on the CI runners (ci-base, Ubuntu 24.04)")
+  (ok (equal "2.56.0" git:*minimum-git-version*)
+      "minimum = the oldest git on the CI runners (macos-latest, 2026-11-20)")
   (ok (equal "git" git:*git-program*)))
 
 (deftest installed-git-meets-the-minimum

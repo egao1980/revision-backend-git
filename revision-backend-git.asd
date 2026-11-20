@@ -1,5 +1,5 @@
 (defsystem "revision-backend-git"
-  :version "0.3.0"
+  :version "0.4.0"
   :description "revision-protocol backend over the git CLI: commits as revisions, branches and tags as refs with update-ref CAS, graph walks via rev-list, state diffs via diff-tree / git diff and diff-protocol, working-copy drift and capture, a read-only cl-stack-pathlib filesystem per revision; V1: projections (trees and linked worktrees), merges via merge-tree, transition plans on the working copy, linked worktrees, replay"
   :author "egao1980"
   :license "MIT"
@@ -48,6 +48,7 @@
                (:file "projection-test")
                (:file "merge-test")
                (:file "transition-test")
+               (:file "racy-test")
                (:file "worktree-test")
                (:file "replay-test"))
   :perform (test-op (o c)

@@ -7,8 +7,9 @@
 ;;; are on disk plus untracked files that are not ignored (.gitignore,
 ;;; .git/info/exclude, core.excludesFile), read the same way as
 ;;; REVISION-STATE. The index does not count: staging a change neither causes
-;;; nor clears drift. Computed through a temporary index (GIT_INDEX_FILE = a
-;;; copy of the real index, `add -A`, `write-tree`), never the real one.
+;;; nor clears drift. Computed through the store's stat index (below:
+;;; GIT_INDEX_FILE = <git dir>/rbg-stat-index, `add -A`, `write-tree`), never
+;;; the real one.
 ;;;
 ;;; The stamp. STAMP-REF NIL (default): the stamp is HEAD. TARGET-REVISIONS
 ;;; → (HEAD's commit id), NIL on an unborn branch; TARGET-STAMP moves HEAD
@@ -101,24 +102,161 @@ store's GIT-STORE-PATH)."
          (%git store (list "update-ref" (%stamp-name target) id))
          (list id))))))
 
+;;; ------------------------------------------------------------------
+;;; The stat index (racy git). The worktree's tree id comes from `add -A` on
+;;; a private, persistent index file per worktree, <git dir>/rbg-stat-index,
+;;; that only %WORKTREE-TREE-ID uses. git keeps its stat cache, so `add -A`
+;;; hashes only files whose stat changed since the last call, and git's own
+;;; racy-git rule keeps that sound: an entry whose mtime is not older than
+;;; the index file's mtime is compared by content, and racily clean entries
+;;; are smudged when the index is written. The rule holds only while git
+;;; alone writes the file in place, so the backend never copies an index
+;;; with stat data over another, or touches one: a copy gets a fresh mtime
+;;; and turns racy entries into trusted ones (#4: a copy of the real index
+;;; made a same-size rewrite in the same second, inode reused, look clean). The
+;;; real index follows the same rule: only git writes it (%SYNC-REAL-INDEX).
+;;;
+;;; `add -A` starts from the index it runs on: tracked files that match an
+;;; ignore rule stay, and with core.fileMode / core.symlinks false modes come
+;;; from the entries. So each call first makes the stat index's paths and
+;;; modes match the real index (%SEED-STAT-INDEX; reseeded entries carry no
+;;; stat data and are hashed once). Two threads of this process take a per-file lock;
+;;; another process holding the index lock → the old way, a throwaway
+;;; temporary index without stat data (every file hashed; correct, slower).
+;;; ------------------------------------------------------------------
+
+(defvar *stat-index-locks* (make-hash-table :test 'equal)
+  "Native namestring of a stat index → its BT2 lock.")
+
+(defvar *stat-index-locks-lock* (bt2:make-lock :name "revision-backend-git stat index table"))
+
+(defun %stat-index-file (store)
+  (merge-pathnames "rbg-stat-index" (git-store-git-dir store)))
+
+(defun %stat-index-lock (file)
+  (let ((key (uiop:native-namestring file)))
+    (bt2:with-lock-held (*stat-index-locks-lock*)
+      (or (gethash key *stat-index-locks*)
+          (setf (gethash key *stat-index-locks*)
+                (bt2:make-lock :name (format nil "stat index ~a" key)))))))
+
+(defun %octet-records (octets)
+  "OCTETS split at NUL bytes; the empty record after a final NUL dropped."
+  (loop with n = (length octets)
+        for start = 0 then (1+ end)
+        while (< start n)
+        for end = (or (position 0 octets :start start) n)
+        collect (subseq octets start end)))
+
+(defun %record-path (record)
+  "Path octets of an `ls-files -s` RECORD (after the TAB)."
+  (subseq record (1+ (position 9 record))))
+
+(defun %join-records (records)
+  "RECORDS (octet vectors) each followed by a NUL byte → one octet vector."
+  (let ((out (make-array (reduce #'+ records :key (lambda (r) (1+ (length r))))
+                         :element-type '(unsigned-byte 8)))
+        (i 0))
+    (dolist (r records out)
+      (replace out r :start1 i)
+      (incf i (length r))
+      (setf (aref out i) 0)
+      (incf i))))
+
+(defun %record-mode (record)
+  "Mode octets of an `ls-files -s` RECORD (before the first space)."
+  (subseq record 0 (position 32 record)))
+
+(defun %index-entries (store &key extra-env ignored)
+  "`ls-files -z -s` of the real index (or of the index EXTRA-ENV names),
+only the entries matching an ignore rule when IGNORED → a hash table path
+octets → mode octets."
+  (let ((table (make-hash-table :test 'equalp)))
+    (dolist (r (%octet-records
+                (%git store (append '("ls-files" "-z" "-s")
+                                    (and ignored '("-c" "-i" "--exclude-standard")))
+                      :output :octets :extra-env extra-env))
+               table)
+      (let ((path (%record-path r)))
+        (unless (gethash path table)
+          (setf (gethash path table) (%record-mode r)))))))
+
+(defparameter +inherited-modes+
+  (list (map '(vector (unsigned-byte 8)) #'char-code "100755")
+        (map '(vector (unsigned-byte 8)) #'char-code "120000"))
+  "Modes `add -A` may keep from an existing entry instead of reading them off
+the disk (core.fileMode / core.symlinks false).")
+
+(defun %seed-stat-index (store env)
+  "Give the index ENV names the entries `add -A` would start from in a copy
+of the real index, keeping the stat data of the rest: each real-index path
+missing there or with another mode is (re)added from the real index (no
+stat data, so it is hashed once); a path the real index lacks is removed
+when it matches an ignore rule (a copy would not have it, and `add -A` does
+not add it) or has a mode `add -A` could only have kept from an entry
+(+INHERITED-MODES+), so `add -A` adds it afresh."
+  (let* ((real-records (%octet-records (%git store '("ls-files" "-z" "-s") :output :octets)))
+         (real (make-hash-table :test 'equalp))
+         (have (%index-entries store :extra-env env))
+         (have-ignored nil)
+         (add '())
+         (drop '()))
+    (dolist (r real-records)
+      (let ((path (%record-path r)))
+        (unless (gethash path real)
+          (setf (gethash path real) (%record-mode r)))))
+    (dolist (r real-records)
+      (let ((mode (gethash (%record-path r) have)))
+        (unless (and mode (equalp mode (gethash (%record-path r) real)))
+          (push r add))))
+    (maphash (lambda (path mode)
+               (unless (gethash path real)
+                 (when (or (member mode +inherited-modes+ :test #'equalp)
+                           (gethash path (or have-ignored
+                                             (setf have-ignored
+                                                   (%index-entries store :extra-env env :ignored t)))))
+                   (push path drop))))
+             have)
+    (when drop
+      (%git store '("update-index" "-z" "--force-remove" "--stdin")
+            :extra-env env :input (%join-records drop)))
+    (when add
+      (%git store '("update-index" "-z" "--index-info")
+            :extra-env env :input (%join-records (nreverse add))))))
+
+(defun %index-lock-busy-p (condition)
+  (let ((err (git-command-error-stderr condition)))
+    (and err (search ".lock" err) (search "exists" err))))
+
+(defun %worktree-tree-id/no-stat (store)
+  "Tree id of `add -A` through a throwaway index holding the real index's
+entries without stat data: every file is hashed."
+  (%call-with-temp-index
+   store nil
+   (lambda (env)
+     (%git store '("update-index" "-z" "--index-info")
+           :extra-env env
+           :input (%git store '("ls-files" "-s" "-z") :output :octets))
+     (%git store '("add" "-A") :extra-env env)
+     (%chomp (%git store '("write-tree") :extra-env env)))))
+
+(defun %worktree-tree-id (store)
+  "Tree id of what `git add -A` would record in STORE's worktree, through the
+stat index; the real index is only read."
+  (let* ((file (%stat-index-file store))
+         (env (list (cons "GIT_INDEX_FILE" (uiop:native-namestring file)))))
+    (or (block cached
+          (handler-bind ((git-command-error
+                           (lambda (c) (when (%index-lock-busy-p c) (return-from cached nil)))))
+            (bt2:with-lock-held ((%stat-index-lock file))
+              (%seed-stat-index store env)
+              (%git store '("add" "-A") :extra-env env)
+              (%chomp (%git store '("write-tree") :extra-env env)))))
+        (%worktree-tree-id/no-stat store))))
+
 (defun %working-tree-id (target)
-  "Tree id of what `git add -A` would record, through a temporary index.
-The temporary index holds the real index's entries (so tracked files that
-match an ignore rule stay) but no stat data: `update-index --index-info`
-records none, so `add -A` hashes every file. A copy of the real index would
-carry its stat cache, and that cache lies after %WRITE-WORKTREE rewrote files
-behind it: git compares whole-second mtimes, so a same-size rewrite in the
-same second (with the inode reused, as ext4 does, or with no inode at all, as
-on Windows) looks clean and `add -A` keeps the old blob."
-  (let ((store (working-copy-store target)))
-    (%call-with-temp-index
-     store nil
-     (lambda (env)
-       (%git store '("update-index" "-z" "--index-info")
-             :extra-env env
-             :input (%git store '("ls-files" "-s" "-z") :output :octets))
-       (%git store '("add" "-A") :extra-env env)
-       (%chomp (%git store '("write-tree") :extra-env env))))))
+  "Tree id of what `git add -A` would record in TARGET's worktree."
+  (%worktree-tree-id (working-copy-store target)))
 
 (defmethod %operand-tree ((store git-store) (operand git-working-copy))
   (%working-tree-id operand))
@@ -182,22 +320,32 @@ then each parent directory below TOP that this leaves empty."
 
 (defun %write-worktree (store tree)
   "Make the files of STORE's worktree equal the tree object TREE (an id):
-files of TREE are written (`checkout-index -f -a` from a temporary index
+files of TREE are written (`checkout-index -f` from a temporary index
 holding TREE), tracked and untracked files outside TREE are deleted, ignored
 files (by the rules in effect after the write) are left alone; embedded
-repositories are never entered. → TREE."
-  (let ((top (git-store-path store)))
-    (%call-with-temp-index
-     store nil
-     (lambda (env)
-       (%git store (list "read-tree" tree) :extra-env env)
-       (%git store '("checkout-index" "-f" "-a") :extra-env env)
-       ;; The index holds exactly TREE: "others, not ignored" are precisely the
-       ;; paths to delete.
-       (dolist (rel (%nul-records (%git store '("ls-files" "-z" "--others" "--exclude-standard")
-                                        :extra-env env)))
-         (unless (char= #\/ (char rel (1- (length rel))))
-           (%delete-worktree-path top rel)))))
+repositories are never entered. Only paths whose content or mode differs
+from TREE are written (diff of the worktree's tree id, %WORKTREE-TREE-ID,
+against TREE), so the stat caches of the other files stay valid. → TREE."
+  (let ((top (git-store-path store))
+        (current (%worktree-tree-id store)))
+    (unless (equal current tree)
+      (let ((changed (%octet-records
+                      (%git store (list "diff-tree" "-r" "-z" "--no-renames" "--name-only"
+                                        "--diff-filter=d" current tree)
+                            :output :octets))))
+        (%call-with-temp-index
+         store nil
+         (lambda (env)
+           (%git store (list "read-tree" tree) :extra-env env)
+           (when changed
+             (%git store '("checkout-index" "-f" "-z" "--stdin")
+                   :extra-env env :input (%join-records changed)))
+           ;; The index holds exactly TREE: "others, not ignored" are precisely
+           ;; the paths to delete.
+           (dolist (rel (%nul-records (%git store '("ls-files" "-z" "--others" "--exclude-standard")
+                                            :extra-env env)))
+             (unless (char= #\/ (char rel (1- (length rel))))
+               (%delete-worktree-path top rel)))))))
     tree))
 
 (defmethod rev:target-transactional-p ((target git-working-copy))

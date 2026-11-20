@@ -8,20 +8,14 @@
 ;;; a GIT-STORE opened on it (same :ENV and :PERMIT-FORCE), so
 ;;; (MAKE-GIT-WORKING-COPY that-store) is its target.
 ;;;
-;;; REPLAY-REVISIONS is `git replay`, which needs git >= *REPLAY-GIT-VERSION*
-;;; while *MINIMUM-GIT-VERSION* is lower (the ci-base container has 2.43,
-;;; cl-repository#101): it is the one capability-gated operation. Older git →
-;;; VC-TOOL-VERSION-ERROR (:REQUIRED *REPLAY-GIT-VERSION*) before any git
-;;; command runs; GIT-REPLAY-P says in advance.
+;;; REPLAY-REVISIONS is `git replay` (git >= 2.44; *MINIMUM-GIT-VERSION* is
+;;; above that, so it is not gated).
 ;;;
 ;;; `git replay` only reports refs/heads/* updates, so the chain's tip gets a
 ;;; temporary branch for the run (deleted afterwards); replay runs in print
-;;; mode (`--ref-action=print` where this git has it) and the backend moves
-;;; REF itself through MOVE-REF (CAS, V0 restarts).
+;;; mode (`--ref-action=print`) and the backend moves REF itself through
+;;; MOVE-REF (CAS, V0 restarts).
 ;;; ------------------------------------------------------------------
-
-(defparameter *replay-git-version* "2.44.0"
-  "First git release with `git replay`. REPLAY-REVISIONS needs at least this.")
 
 (define-condition replay-conflict (rev:revision-error)
   ((revision :initarg :revision :reader replay-conflict-revision :initform nil)
@@ -184,19 +178,6 @@ REVISION-ERROR."
 
 ;;; ---- replay ----------------------------------------------------------
 
-(defun git-replay-p (store)
-  "True when STORE's git (probed version) is at least *REPLAY-GIT-VERSION*."
-  (check-type store git-store)
-  (not (%version< (%git-store-version store) (parse-git-version *replay-git-version*))))
-
-(defun %replay-print-option (store)
-  "(\"--ref-action=print\") when this git's replay has the option, else NIL
-(older replay prints by default)."
-  (multiple-value-bind (out code err) (%git store '("replay" "-h") :ok '(0 1 128 129))
-    (declare (ignore code))
-    (when (or (search "--ref-action" out) (search "--ref-action" err))
-      (list "--ref-action=print"))))
-
 (defun %check-chain (commits)
   "REVISION-ERROR unless COMMITS is a parents-first chain without merges."
   (loop for prev = nil then c
@@ -218,14 +199,10 @@ author date; committer date (DT:NOW). REF (a branch short name): moved to the
 last new revision with CAS against EXPECTED (default: its current target);
 failure → REF-CONFLICT with the V0 restarts. Nothing in the worktree or
 index changes.
-Older git → VC-TOOL-VERSION-ERROR (:TOOL \"git\" :REQUIRED
-*REPLAY-GIT-VERSION*), before any git command. A merge commit in REVISIONS,
+A merge commit in REVISIONS,
 or REVISIONS that are not a chain → REVISION-ERROR. A conflict →
 REPLAY-CONFLICT, no ref moved. REVISIONS NIL → NIL."
   (check-type store git-store)
-  (let ((required *replay-git-version*))
-    (when (%version< (%git-store-version store) (parse-git-version required))
-      (error 'vc-tool-version-error :tool "git" :found (git-version store) :required required)))
   (check-type revisions list)
   (check-type ref (or null string))
   (when (null revisions)
@@ -245,10 +222,8 @@ REPLAY-CONFLICT, no ref moved. REVISIONS NIL → NIL."
       (%git store (list "update-ref" temp tip (%zero-id store)))
       (unwind-protect
            (multiple-value-bind (out code)
-               (%git store (append (list "replay")
-                                   (%replay-print-option store)
-                                   (list "--onto" onto-id
-                                         (if base (format nil "~a..~a" base temp) temp)))
+               (%git store (list "replay" "--ref-action=print" "--onto" onto-id
+                                 (if base (format nil "~a..~a" base temp) temp))
                      :ok '(0 1)
                      :extra-env (list (cons "GIT_COMMITTER_DATE"
                                             (format nil "@~d +0000" (%now-seconds)))))
