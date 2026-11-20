@@ -1,9 +1,9 @@
 (defsystem "revision-backend-git"
-  :version "0.4.0"
+  :version "0.5.0"
   :description "revision-protocol backend over the git CLI: commits as revisions, branches and tags as refs with update-ref CAS, graph walks via rev-list, state diffs via diff-tree / git diff and diff-protocol, working-copy drift and capture, a read-only cl-stack-pathlib filesystem per revision; V1: projections (trees and linked worktrees), merges via merge-tree, transition plans on the working copy, linked worktrees, replay"
   :author "egao1980"
   :license "MIT"
-  :depends-on ((:version "revision-protocol" "0.3.0")
+  :depends-on ((:version "revision-protocol" "0.4.0")
                (:version "diff-protocol" "0.2.1")
                (:version "datetime-protocol" "0.1.3")
                (:version "process-protocol" "0.3.0")
@@ -50,7 +50,9 @@
                (:file "transition-test")
                (:file "racy-test")
                (:file "worktree-test")
-               (:file "replay-test"))
+               (:file "replay-test")
+               ;; 0.5.0
+               (:file "v05-test"))
   :perform (test-op (o c)
              (unless (symbol-call :rove :run c)
                (error "tests failed for ~A" (component-name c)))))

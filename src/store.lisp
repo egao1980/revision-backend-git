@@ -23,11 +23,15 @@
 ;;;   message without its final newline, NIL for a lightweight tag or a branch.
 ;;;   MOVE-REF / DELETE-REF / COMMIT-REVISION :REF use
 ;;;   `update-ref refs/heads/NAME NEW OLD` (OLD = the zero id for :EXPECTED
-;;;   NIL), so CAS also holds against other git processes. TAG-REVISION
+;;;   NIL), so CAS also holds against other git processes. A NAME starting
+;;;   with refs/ is a full ref name, used as given (0.5.0): CAS works on any
+;;;   namespace; under refs/tags/ it is a tag (immutable). TAG-REVISION
 ;;;   creates a lightweight tag, or an annotated one (`tag -a`) when
 ;;;   :ANNOTATION is given; the tagger is the committer identity of the
-;;;   store's environment. REF-LISTENER sees changes made through this store
-;;;   only.
+;;;   store's environment. TAG-REWRITE-P is T: REPLACE-ANNOTATION writes a new
+;;;   tag object (`mktag`; NIL annotation → lightweight) and moves the tag with
+;;;   `update-ref NEW OLD`. REF-LISTENER sees changes made through this store
+;;;   only; an annotation rewrite is no event.
 ;;;
 ;;; COMMIT-REVISION — CONTENT is one of:
 ;;;   a DIFF-PROTOCOL tree value            → that tree (blobs and trees written);
@@ -180,13 +184,35 @@
 ;;; Resolution
 ;;; ------------------------------------------------------------------
 
+(defun %prefixed-p (prefix name)
+  (and (>= (length name) (length prefix))
+       (string= prefix name :end2 (length prefix))))
+
+(defun %full-name-p (name)
+  "True when NAME is a full ref name (starts with refs/): used as given."
+  (%prefixed-p "refs/" name))
+
+(defun %movable-full (name)
+  "Full ref a movable NAME updates: NAME itself when it starts with refs/,
+else refs/heads/NAME."
+  (if (%full-name-p name) name (concatenate 'string "refs/heads/" name)))
+
+(defun %tag-full (name)
+  "Full ref of tag NAME: NAME itself when it starts with refs/tags/, NIL for
+another full name (not a tag), else refs/tags/NAME."
+  (cond ((%prefixed-p "refs/tags/" name) name)
+        ((%full-name-p name) nil)
+        (t (concatenate 'string "refs/tags/" name))))
+
 (defun %branch-target (store name)
-  "Commit id refs/heads/NAME points at, or NIL."
-  (%rev-parse-verify store (concatenate 'string "refs/heads/" name)))
+  "Object id the movable ref NAME (see %MOVABLE-FULL) points at, or NIL."
+  (%rev-parse-verify store (%movable-full name)))
 
 (defun %tag-target (store name)
-  "Commit id the tag NAME peels to, or NIL (no tag, or a tag of a non-commit)."
-  (%rev-parse-verify store (concatenate 'string "refs/tags/" name "^{commit}")))
+  "Commit id the tag NAME peels to, or NIL (no tag, a tag of a non-commit, or a
+full name outside refs/tags/)."
+  (let ((full (%tag-full name)))
+    (and full (%rev-parse-verify store (concatenate 'string full "^{commit}")))))
 
 (defun %prefix-commits (store prefix)
   "Full ids of every commit object whose id starts with PREFIX."
@@ -287,15 +313,20 @@
 (defun %movable-ref (name target)
   (make-instance 'rev:revision-ref :name name :kind :movable :target target))
 
-(defun %entry-ref (store entry)
-  "REVISION-REF of a %REF-ENTRIES entry, or NIL (a tag of a non-commit)."
+(defun %entry-ref (store entry &optional full-names)
+  "REVISION-REF of a %REF-ENTRIES entry, or NIL (a tag of a non-commit).
+FULL-NAMES NIL: only refs/heads/* and refs/tags/*, named by their short names.
+FULL-NAMES T: any ref, named by its full name (:TAG under refs/tags/,
+:MOVABLE otherwise)."
   (destructuring-bind (full type id ptype pid contents) entry
     (flet ((after (prefix)
              (and (> (length full) (length prefix))
                   (string= prefix full :end2 (length prefix))
-                  (subseq full (length prefix)))))
-      (let ((branch (after "refs/heads/"))
-            (tag (after "refs/tags/")))
+                  (if full-names full (subseq full (length prefix))))))
+      (let* ((tag (after "refs/tags/"))
+             (branch (if full-names
+                         (and (null tag) (after "refs/") full)
+                         (after "refs/heads/"))))
         (cond
           (branch (and (equal type "commit") (%movable-ref branch id)))
           ((null tag) nil)
@@ -310,13 +341,15 @@
                                                    :annotation (%chomp contents))))))))))
 
 (defun %refs-named (store name)
-  "→ (values tag-ref branch-ref) for NAME, each NIL when absent."
-  (let ((tag-name (concatenate 'string "refs/tags/" name))
-        (branch-name (concatenate 'string "refs/heads/" name))
-        (tag nil) (branch nil))
-    (dolist (e (%ref-entries store (list tag-name branch-name)))
-      (cond ((string= (first e) tag-name) (setf tag (%entry-ref store e)))
-            ((string= (first e) branch-name) (setf branch (%entry-ref store e)))))
+  "→ (values tag-ref branch-ref) for NAME, each NIL when absent. A full NAME
+(refs/…) names one ref: a tag under refs/tags/, a movable ref otherwise."
+  (let* ((full-p (%full-name-p name))
+         (tag-name (%tag-full name))
+         (branch-name (and (not (and full-p tag-name)) (%movable-full name)))
+         (tag nil) (branch nil))
+    (dolist (e (%ref-entries store (remove nil (list tag-name branch-name))))
+      (cond ((equal (first e) tag-name) (setf tag (%entry-ref store e full-p)))
+            ((equal (first e) branch-name) (setf branch (%entry-ref store e full-p)))))
     (values tag branch)))
 
 (defmethod rev:find-ref ((store git-store) name)
@@ -327,8 +360,11 @@
 (defmethod rev:list-refs ((store git-store) &key kind prefix)
   (check-type kind (member nil :movable :tag))
   (check-type prefix (or null string))
-  (let ((refs (loop for e in (%ref-entries store '("refs/heads" "refs/tags"))
-                    for ref = (%entry-ref store e)
+  (let* ((full-names (and prefix (%full-name-p prefix)))
+         (refs (loop for e in (%ref-entries store (if full-names
+                                                      '("refs")
+                                                      '("refs/heads" "refs/tags")))
+                    for ref = (%entry-ref store e full-names)
                     when (and ref
                               (or (null kind) (eq kind (rev:ref-kind ref)))
                               (or (null prefix)
@@ -345,7 +381,8 @@
 ;;; Listener
 
 (defmethod rev:ref-listener ((store git-store))
-  (%git-store-listener store))
+  (bt2:with-lock-held ((%git-store-listener-lock store))
+    (%git-store-listener store)))
 
 (defmethod (setf rev:ref-listener) (function (store git-store))
   (check-type function (or null function))
@@ -353,8 +390,9 @@
     (setf (%git-store-listener store) function)))
 
 (defun %notify (store event)
-  "Call STORE's listener with EVENT. No lock held."
-  (let ((fn (%git-store-listener store)))
+  "Call STORE's listener with EVENT. The listener is read under its lock and
+called after release."
+  (let ((fn (and event (rev:ref-listener store))))
     (when (and fn event)
       (funcall fn event))))
 
@@ -378,12 +416,13 @@
     (values (eql code 0) err code)))
 
 (defun %cas-branch (store name new want want-p)
-  "Move refs/heads/NAME to NEW (NIL deletes) when it holds WANT (checked only
+  "Move movable ref NAME (refs/heads/NAME, or NAME itself when it starts with
+refs/) to NEW (NIL deletes) when it holds WANT (checked only
 when WANT-P). → (values status current): :OK (CURRENT = the old target),
 :UNCHANGED, :CONFLICT (CURRENT = the actual target), :MISSING (delete of an
 absent ref). Read, compare and update-ref run under the store's ref lock;
 update-ref's own OLD check makes it atomic against other processes."
-  (let ((full (concatenate 'string "refs/heads/" name))
+  (let ((full (%movable-full name))
         (failure nil))
     (bt2:with-lock-held ((%git-store-ref-lock store))
       (loop for attempt below 20
@@ -474,12 +513,56 @@ update-ref's own OLD check makes it atomic against other processes."
 (defun %now-seconds ()
   (dt:instant-seconds (dt:now)))
 
+(defun %annotation-text (annotation)
+  "ANNOTATION with exactly one final newline added when it has none."
+  (if (and (plusp (length annotation))
+           (char= #\Newline (char annotation (1- (length annotation)))))
+      annotation
+      (format nil "~a~%" annotation)))
+
+(defun %tag-env ()
+  (list (cons "GIT_COMMITTER_DATE" (format nil "@~d +0000" (%now-seconds)))))
+
+(defun %short-tag-name (tag-full)
+  (subseq tag-full (length "refs/tags/")))
+
+(defun %make-tag-object (store tag-full target annotation)
+  "Write an annotated tag object for TAG-FULL at commit TARGET → its id. The ref
+is not touched. The tagger is the store environment's committer identity."
+  (let* ((ident (%chomp (%git store '("var" "GIT_COMMITTER_IDENT") :extra-env (%tag-env))))
+         (text (format nil "object ~a~%type commit~%tag ~a~%tagger ~a~%~%~a"
+                       target (%short-tag-name tag-full) ident
+                       (%annotation-text annotation))))
+    (%chomp (%git store '("mktag") :input text))))
+
+(defun %rewrite-tag (store tag-full target annotation)
+  "Point TAG-FULL (which must still peel to TARGET) at a new tag object with
+ANNOTATION (NIL: a lightweight tag) by `update-ref NEW OLD` (CAS against other
+processes). → T, or NIL when the tag changed meanwhile."
+  (bt2:with-lock-held ((%git-store-ref-lock store))
+    (let ((old (%rev-parse-verify store tag-full)))
+      (when (and old (equal target (%tag-target store tag-full)))
+        (let ((new (if annotation
+                       (%make-tag-object store tag-full target annotation)
+                       target)))
+          (multiple-value-bind (ok err code) (%update-ref store tag-full new old)
+            (declare (ignore err code))
+            ok))))))
+
+(defmethod rev:tag-rewrite-p ((store git-store))
+  "T: a tag's annotation is rewritten by writing a new tag object and moving
+refs/tags/NAME to it with `update-ref NEW OLD`."
+  t)
+
 (defmethod rev:tag-revision ((store git-store) name designator &key annotation)
   (check-type name string)
   (check-type annotation (or null string))
   (%check-designator designator)
   (let* ((target (%resolve-id store designator))
-         (tag-name (concatenate 'string "refs/tags/" name)))
+         (tag-name (or (%tag-full name)
+                       (error 'rev:revision-error
+                              :message (format nil "tag ~s: a full tag name starts with refs/tags/"
+                                               name)))))
     (multiple-value-bind (status ref)
         (bt2:with-lock-held ((%git-store-ref-lock store))
           (multiple-value-bind (tag branch) (%refs-named store name)
@@ -491,13 +574,10 @@ update-ref's own OLD check makes it atomic against other processes."
                 (raw-tag (values :immutable tag))
                 (branch (values :branch branch))
                 (annotation
-                 (%git store (list "tag" "-a" "--cleanup=verbatim" "-F" "-" name target)
-                       :input (if (and (plusp (length annotation))
-                                       (char= #\Newline (char annotation (1- (length annotation)))))
-                                  annotation
-                                  (format nil "~a~%" annotation))
-                       :extra-env (list (cons "GIT_COMMITTER_DATE"
-                                              (format nil "@~d +0000" (%now-seconds)))))
+                 (%git store (list "tag" "-a" "--cleanup=verbatim" "-F" "-"
+                                   (%short-tag-name tag-name) target)
+                       :input (%annotation-text annotation)
+                       :extra-env (%tag-env))
                  (values :created (rev:find-ref store name)))
                 (t
                  (multiple-value-bind (ok err code) (%update-ref store tag-name target nil)
@@ -515,11 +595,21 @@ update-ref's own OLD check makes it atomic against other processes."
          (error 'rev:ref-conflict :name name :expected nil :actual (rev:ref-target ref)
                                   :message "a movable ref has that name"))
         (:immutable
-         (restart-case (error 'rev:tag-immutable :name name :target (and ref (rev:ref-target ref)))
-           (rev:create-new-tag (new-name)
-             :report "Create a new tag with another name instead."
-             :interactive %read-new-tag-name
-             (rev:tag-revision store new-name designator :annotation annotation))))))))
+         (let ((rewritable (and ref (equal target (rev:ref-target ref)))))
+           (restart-case (error 'rev:tag-immutable :name name :target (and ref (rev:ref-target ref)))
+             (rev:create-new-tag (new-name)
+               :report "Create a new tag with another name instead."
+               :interactive %read-new-tag-name
+               (rev:tag-revision store new-name designator :annotation annotation))
+             (rev:replace-annotation ()
+               :test (lambda (c) (declare (ignore c)) rewritable)
+               :report (lambda (s)
+                         (format s "Rewrite the annotation of tag ~s (target unchanged)." name))
+               (unless (%rewrite-tag store tag-name target annotation)
+                 (error 'rev:revision-error
+                        :message (format nil "tag ~s changed while its annotation was rewritten"
+                                         name)))
+               (rev:find-ref store name)))))))))
 
 ;;; ------------------------------------------------------------------
 ;;; Writing trees and commits
@@ -642,6 +732,9 @@ its lock are deleted afterwards; the real index is never opened for writing."
   (check-type parents list)
   (mapc #'%check-designator parents)
   (when expected (%check-designator expected))
+  (when (and expected-p (null ref))
+    (error 'rev:revision-error
+           :message (format nil "commit-revision :expected ~s given without :ref" expected)))
   (when ref
     (let ((tag (%tag-target store ref)))
       (when tag (error 'rev:tag-immutable :name ref :target tag))))
