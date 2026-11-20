@@ -1,6 +1,6 @@
 (defsystem "revision-backend-git"
-  :version "0.2.1"
-  :description "revision-protocol backend over the git CLI: commits as revisions, branches and tags as refs with update-ref CAS, graph walks via rev-list, state diffs via diff-tree / git diff and diff-protocol, working-copy drift and capture, a read-only cl-stack-pathlib filesystem per revision"
+  :version "0.3.0"
+  :description "revision-protocol backend over the git CLI: commits as revisions, branches and tags as refs with update-ref CAS, graph walks via rev-list, state diffs via diff-tree / git diff and diff-protocol, working-copy drift and capture, a read-only cl-stack-pathlib filesystem per revision; V1: projections (trees and linked worktrees), merges via merge-tree, transition plans on the working copy, linked worktrees, replay"
   :author "egao1980"
   :license "MIT"
   :depends-on ((:version "revision-protocol" "0.3.0")
@@ -8,7 +8,7 @@
                (:version "datetime-protocol" "0.1.3")
                (:version "process-protocol" "0.3.0")
                (:version "process-backend-uiop" "0.2.0")
-               (:version "cl-stack-pathlib" "0.6.1")
+               (:version "cl-stack-pathlib" "0.4.0")
                (:version "encoding-protocol" "0.2.0")
                (:version "bordeaux-threads" "0.9.4"))
   :serial t
@@ -19,7 +19,10 @@
                (:file "parse")
                (:file "store")
                (:file "working-copy")
-               (:file "filesystem"))
+               (:file "filesystem")
+               (:file "projection")
+               (:file "plan")
+               (:file "worktree"))
   :in-order-to ((test-op (test-op "revision-backend-git/tests"))))
 
 (defsystem "revision-backend-git/tests"
@@ -39,7 +42,14 @@
                (:file "content-test")
                (:file "working-copy-test")
                (:file "filesystem-test")
-               (:file "law-test"))
+               (:file "law-test")
+               ;; V1
+               (:file "v1-support")
+               (:file "projection-test")
+               (:file "merge-test")
+               (:file "transition-test")
+               (:file "worktree-test")
+               (:file "replay-test"))
   :perform (test-op (o c)
              (unless (symbol-call :rove :run c)
                (error "tests failed for ~A" (component-name c)))))

@@ -62,4 +62,34 @@
    ;; parsers of machine git output (pure; fuzzed from corpora)
    #:parse-status-porcelain-v2
    #:parse-name-status
-   #:parse-ls-tree))
+   #:parse-ls-tree
+
+   ;; ---- V1 -------------------------------------------------------------
+   ;; projections (revision-protocol GFs on GIT-STORE / GIT-PROJECTION)
+   #:git-projection
+   #:git-projection-p
+   #:git-projection-tree
+   #:git-projection-worktree
+   #:merge-projection-marker-tree
+   #:*projection-directory*
+   #:make-tree-filesystem
+   #:revision-filesystem-tree
+   #:apply-patch
+   #:patch-rejected
+   #:patch-rejected-projection
+   #:patch-rejected-stderr
+
+   ;; linked worktrees
+   #:git-store-common-dir
+   #:add-worktree
+   #:list-worktrees
+   #:remove-worktree
+   #:parse-worktree-list
+
+   ;; replay (capability-gated: git >= *replay-git-version*)
+   #:*replay-git-version*
+   #:git-replay-p
+   #:replay-revisions
+   #:replay-conflict
+   #:replay-conflict-revision
+   #:replay-conflict-onto))

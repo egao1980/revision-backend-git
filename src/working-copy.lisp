@@ -31,8 +31,10 @@
 ;;; tree and the real index file stay byte-identical. (Not `stash create`:
 ;;; it skips untracked files and would leave drift behind.)
 ;;;
-;;; V1, not V0: (SETF TARGET-STATE), PLAN-TRANSITION / EXECUTE-PLAN,
-;;; projections, linked worktrees.
+;;; V1 (src/plan.lisp, src/projection.lisp, src/worktree.lisp): (SETF
+;;; TARGET-STATE), PLAN-TRANSITION / EXECUTE-PLAN / PROJECT-PLAN,
+;;; projections, linked worktrees. V1 changes TARGET-FIDELITIES to
+;;; (:EXACT :SHADOW); CAPTURE-REVISION is unchanged.
 ;;; ------------------------------------------------------------------
 
 (defclass git-working-copy (rev:revision-target)
