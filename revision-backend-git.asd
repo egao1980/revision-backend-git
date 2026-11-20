@@ -8,7 +8,7 @@
                (:version "datetime-protocol" "0.1.3")
                (:version "process-protocol" "0.3.0")
                (:version "process-backend-uiop" "0.2.0")
-               (:version "cl-stack-pathlib" "0.4.0")
+               (:version "cl-stack-pathlib" "0.6.1")
                (:version "encoding-protocol" "0.2.0")
                (:version "bordeaux-threads" "0.9.4"))
   :serial t
